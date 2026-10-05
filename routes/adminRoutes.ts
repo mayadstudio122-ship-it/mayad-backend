@@ -4,6 +4,8 @@ import { Router } from "express";
 import {
   adminLogin,
   getAdminProfile,
+  updateAdminProfile,
+  updateAdminPassword,
   adminLogout,
   getAdminStats,
   getAdminArtists,
@@ -32,7 +34,7 @@ import {
 const router = Router();
 
 // ============================================================
-// CEO AUTHENTICATION
+// CEO AUTHENTICATION & PROFILE
 // ============================================================
 
 // CEO login
@@ -40,6 +42,8 @@ router.post("/login", adminLogin);
 
 // Protected CEO profile
 router.get("/me", adminAuth, getAdminProfile);
+router.put("/profile", adminAuth, updateAdminProfile);
+router.put("/change-password", adminAuth, updateAdminPassword);
 
 // CEO logout
 router.post("/logout", adminLogout);

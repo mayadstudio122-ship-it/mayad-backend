@@ -287,21 +287,124 @@ export const getAdminProfile = async (
     });
 
   } catch (error) {
-
     console.error("Admin profile error:", error);
-
-
-
     res.status(500).json({
-
       success: false,
-
       message: "Unable to fetch admin profile",
-
     });
-
   }
+};
 
+// UPDATE CEO PROFILE (EMAIL & NAME)
+export const updateAdminProfile = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const adminId = res.locals.admin?.id;
+    if (!adminId) {
+      res.status(401).json({ success: false, message: "Admin authentication required" });
+      return;
+    }
+
+    const { email, firstName, lastName } = req.body as {
+      email?: string;
+      firstName?: string;
+      lastName?: string;
+    };
+
+    const admin = await Admin.findOne({ _id: adminId, role: "CEO", isActive: true });
+    if (!admin) {
+      res.status(404).json({ success: false, message: "Admin account not found" });
+      return;
+    }
+
+    if (email && email.trim()) {
+      const trimmedEmail = email.toLowerCase().trim();
+      const existing = await Admin.findOne({ email: trimmedEmail, _id: { $ne: adminId } });
+      if (existing) {
+        res.status(400).json({ success: false, message: "Email is already in use by another admin" });
+        return;
+      }
+      admin.email = trimmedEmail;
+    }
+
+    if (firstName || lastName) {
+      const currentParts = (admin.name || "").split(" ");
+      const fName = firstName !== undefined ? firstName.trim() : (currentParts[0] || "");
+      const lName = lastName !== undefined ? lastName.trim() : (currentParts.slice(1).join(" ") || "");
+      admin.name = `${fName} ${lName}`.trim();
+    }
+
+    await admin.save();
+
+    const nameParts = (admin.name || "").split(" ");
+    res.status(200).json({
+      success: true,
+      message: "Admin profile updated successfully",
+      admin: {
+        id: admin._id.toString(),
+        name: admin.name,
+        firstName: nameParts[0] || "Super",
+        lastName: nameParts.slice(1).join(" ") || "Admin",
+        email: admin.email,
+        role: admin.role,
+      },
+    });
+  } catch (error: any) {
+    console.error("Update admin profile error:", error);
+    res.status(500).json({ success: false, message: error?.message || "Internal server error" });
+  }
+};
+
+// UPDATE CEO PASSWORD
+export const updateAdminPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const adminId = res.locals.admin?.id;
+    if (!adminId) {
+      res.status(401).json({ success: false, message: "Admin authentication required" });
+      return;
+    }
+
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword?: string;
+      newPassword?: string;
+    };
+
+    if (!newPassword || newPassword.length < 6) {
+      res.status(400).json({ success: false, message: "New password must be at least 6 characters long" });
+      return;
+    }
+
+    const admin = await Admin.findOne({ _id: adminId, role: "CEO", isActive: true }).select("+password");
+    if (!admin) {
+      res.status(404).json({ success: false, message: "Admin account not found" });
+      return;
+    }
+
+    if (currentPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, admin.password);
+      if (!isMatch) {
+        res.status(400).json({ success: false, message: "Current password is incorrect" });
+        return;
+      }
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    admin.password = await bcrypt.hash(newPassword, salt);
+    await admin.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (error: any) {
+    console.error("Update admin password error:", error);
+    res.status(500).json({ success: false, message: error?.message || "Internal server error" });
+  }
 };
 
 
