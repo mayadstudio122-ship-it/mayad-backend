@@ -3,6 +3,8 @@ import { Router } from "express";
 
 import {
   adminLogin,
+  adminVerifyOtp,
+  adminResendOtp,
   getAdminProfile,
   adminLogout,
   getAdminStats,
@@ -35,8 +37,14 @@ const router = Router();
 // CEO AUTHENTICATION
 // ============================================================
 
-// CEO login
+// CEO login Step 1 (Validate credentials & send OTP)
 router.post("/login", adminLogin);
+
+// CEO login Step 2 (Verify 6-digit OTP & generate JWT)
+router.post("/verify-otp", adminVerifyOtp);
+
+// CEO login Resend OTP
+router.post("/resend-otp", adminResendOtp);
 
 // Protected CEO profile
 router.get("/me", adminAuth, getAdminProfile);

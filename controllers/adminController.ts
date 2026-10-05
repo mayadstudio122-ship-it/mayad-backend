@@ -14,199 +14,272 @@ import Admin from "../models/Admin";
 
 import Artist from "../models/Artist";
 const ArtistModel: any = Artist;
-import PublicArtist from "../models/PublicArtist";
-import Movie from "../models/Movie";
-
-
+import { sendAdminOtpEmail } from "../utils/sendEmail";
 
 // ============================================================
-
-// CEO LOGIN
-
+// CEO LOGIN (STEP 1: PASSWORD VERIFICATION & OTP DISPATCH)
 // ============================================================
-
-
 
 export const adminLogin = async (
-
   req: Request,
-
   res: Response
-
 ): Promise<void> => {
-
   try {
-
     const { email, password } = req.body as {
-
       email?: string;
-
       password?: string;
-
     };
 
-
-
     if (!email || !password) {
-
       res.status(400).json({
-
         success: false,
-
         message: "Email and password are required",
-
       });
-
       return;
-
     }
-
-
 
     const admin = await Admin.findOne({
-
       email: email.toLowerCase().trim(),
-
       role: "CEO",
-
       isActive: true,
-
     }).select("+password");
 
-
-
     if (!admin) {
-
       res.status(401).json({
-
         success: false,
-
         message: "Invalid email or password",
-
       });
-
       return;
-
     }
 
-
-
-    const isMatch = await bcrypt.compare(
-
-      password,
-
-      admin.password
-
-    );
-
-
+    const isMatch = await bcrypt.compare(password, admin.password);
 
     if (!isMatch) {
-
       res.status(401).json({
-
         success: false,
-
         message: "Invalid email or password",
-
       });
-
       return;
-
     }
 
+    // Generate 6-Digit Random Numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
+    admin.otp = otp;
+    admin.otpExpiresAt = otpExpiresAt;
+    await admin.save();
 
-    const jwtSecret = process.env.JWT_SECRET;
+    // Print OTP in Backend Terminal for easy local testing
+    console.log("\n==========================================");
+    console.log(`🔑 [MAYAD DEV] ADMIN OTP FOR ${admin.email}: ${otp}`);
+    console.log("==========================================\n");
 
-
-
-    if (!jwtSecret) {
-
-      throw new Error("JWT_SECRET is missing");
-
+    // Send OTP via Email
+    let emailSent = false;
+    try {
+      await sendAdminOtpEmail({
+        toEmail: admin.email,
+        adminName: admin.name || "MAYAD CEO",
+        otp,
+      });
+      emailSent = true;
+    } catch (emailErr: any) {
+      console.warn("⚠️ Warning: Could not send OTP via SMTP (SMTP variables missing or invalid in .env).");
+      console.warn("Details:", emailErr?.message || emailErr);
     }
-
-
-
-    const token = jwt.sign(
-
-      {
-
-        id: admin._id.toString(),
-
-        role: "CEO",
-
-      },
-
-      jwtSecret,
-
-      {
-
-        expiresIn: "1d",
-
-        issuer: "mayad-admin",
-
-        audience: "mayad-admin-dashboard",
-
-      }
-
-    );
-
-
-
-    res.cookie("mayad_admin_token", token, {
-
-      httpOnly: true,
-
-      secure: process.env.NODE_ENV === "production",
-
-      sameSite: "lax",
-
-      maxAge: 24 * 60 * 60 * 1000,
-
-      path: "/",
-
-    });
-
-
 
     res.status(200).json({
-
       success: true,
-
-      message: "CEO login successful",
-
-      admin: {
-
-        id: admin._id.toString(),
-
-        name: admin.name,
-
-        email: admin.email,
-
-        role: admin.role,
-
-      },
-
+      step: "VERIFY_OTP",
+      message: emailSent
+        ? `OTP sent successfully to ${admin.email}. Please verify to log in.`
+        : `OTP generated! (SMTP not configured — view OTP in backend terminal console).`,
+      email: admin.email,
     });
-
   } catch (error) {
-
     console.error("Admin login error:", error);
-
-
-
     res.status(500).json({
-
       success: false,
-
       message: "Internal server error",
+    });
+  }
+};
 
+// ============================================================
+// CEO LOGIN (STEP 2: VERIFY OTP & ISSUE TOKEN)
+// ============================================================
+
+export const adminVerifyOtp = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email, otp } = req.body as {
+      email?: string;
+      otp?: string;
+    };
+
+    if (!email || !otp) {
+      res.status(400).json({
+        success: false,
+        message: "Email and OTP code are required",
+      });
+      return;
+    }
+
+    const admin = await Admin.findOne({
+      email: email.toLowerCase().trim(),
+      role: "CEO",
+      isActive: true,
+    }).select("+otp +otpExpiresAt");
+
+    if (!admin || !admin.otp || !admin.otpExpiresAt) {
+      res.status(400).json({
+        success: false,
+        message: "No pending OTP login session found. Please enter your credentials again.",
+      });
+      return;
+    }
+
+    // Validate Expiry
+    if (new Date(admin.otpExpiresAt).getTime() < Date.now()) {
+      res.status(400).json({
+        success: false,
+        message: "OTP code has expired. Please click resend OTP.",
+      });
+      return;
+    }
+
+    // Validate Code Match
+    if (admin.otp.trim() !== otp.trim()) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid OTP code. Please try again.",
+      });
+      return;
+    }
+
+    // Clear OTP fields upon successful verification
+    admin.otp = undefined;
+    admin.otpExpiresAt = undefined;
+    await admin.save();
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error("JWT_SECRET is missing");
+    }
+
+    const token = jwt.sign(
+      {
+        id: admin._id.toString(),
+        role: "CEO",
+      },
+      jwtSecret,
+      {
+        expiresIn: "1d",
+        issuer: "mayad-admin",
+        audience: "mayad-admin-dashboard",
+      }
+    );
+
+    res.cookie("mayad_admin_token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+      path: "/",
     });
 
+    res.status(200).json({
+      success: true,
+      message: "CEO authentication successful",
+      token,
+      admin: {
+        id: admin._id.toString(),
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+      },
+    });
+  } catch (error) {
+    console.error("Admin OTP verification error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
   }
+};
 
+// ============================================================
+// CEO LOGIN (RESEND OTP)
+// ============================================================
+
+export const adminResendOtp = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email } = req.body as { email?: string };
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        message: "Admin email is required",
+      });
+      return;
+    }
+
+    const admin = await Admin.findOne({
+      email: email.toLowerCase().trim(),
+      role: "CEO",
+      isActive: true,
+    });
+
+    if (!admin) {
+      res.status(404).json({
+        success: false,
+        message: "Admin account not found",
+      });
+      return;
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    admin.otp = otp;
+    admin.otpExpiresAt = otpExpiresAt;
+    await admin.save();
+
+    console.log("\n==========================================");
+    console.log(`🔑 [MAYAD DEV RESEND] ADMIN OTP FOR ${admin.email}: ${otp}`);
+    console.log("==========================================\n");
+
+    let emailSent = false;
+    try {
+      await sendAdminOtpEmail({
+        toEmail: admin.email,
+        adminName: admin.name || "MAYAD CEO",
+        otp,
+      });
+      emailSent = true;
+    } catch (emailErr: any) {
+      console.warn("⚠️ Warning: Could not send OTP via SMTP (SMTP variables missing or invalid in .env).");
+    }
+
+    res.status(200).json({
+      success: true,
+      message: emailSent
+        ? `A new 6-digit OTP has been sent to ${admin.email}.`
+        : `A new 6-digit OTP was generated (check backend console for code).`,
+    });
+  } catch (error) {
+    console.error("Resend OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to resend OTP email",
+    });
+  }
 };
 
 
