@@ -16,6 +16,7 @@ import Artist from "../models/Artist";
 const ArtistModel: any = Artist;
 import PublicArtist from "../models/PublicArtist";
 import Movie from "../models/Movie";
+import Inquiry from "../models/Inquiry";
 
 
 
@@ -474,6 +475,8 @@ export const getAdminStats = async (
       .slice(0, 10);
 
     const totalMovies = await (Movie as any).countDocuments();
+    const totalInquiries = await (Inquiry as any).countDocuments();
+    const pendingInquiriesCount = await (Inquiry as any).countDocuments({ status: "Pending" });
 
     res.status(200).json({
       success: true,
@@ -496,9 +499,10 @@ export const getAdminStats = async (
           message: "Project model not connected",
         },
         newInquiries: {
-          count: 0,
-          connected: false,
-          message: "Inquiry model not connected",
+          count: totalInquiries,
+          pendingCount: pendingInquiriesCount,
+          connected: true,
+          message: "Real inquiries from public contact form",
         },
       },
       analytics: {
