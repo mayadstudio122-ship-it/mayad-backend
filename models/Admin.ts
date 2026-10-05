@@ -6,6 +6,8 @@ export interface IAdmin extends Document {
   password: string;
   role: "CEO";
   isActive: boolean;
+  otp?: string;
+  otpExpiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +45,16 @@ const adminSchema = new Schema<IAdmin>(
     isActive: {
       type: Boolean,
       default: true,
+    },
+
+    otp: {
+      type: String,
+      select: false,
+    },
+
+    otpExpiresAt: {
+      type: Date,
+      select: false,
     },
   },
   {
