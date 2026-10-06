@@ -8,6 +8,9 @@ export interface IAdmin extends Document {
   isActive: boolean;
   otp?: string;
   otpExpiresAt?: Date;
+  pendingEmail?: string;
+  emailOtp?: string;
+  emailOtpExpiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +56,23 @@ const adminSchema = new Schema<IAdmin>(
     },
 
     otpExpiresAt: {
+      type: Date,
+      select: false,
+    },
+
+    pendingEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      select: false,
+    },
+
+    emailOtp: {
+      type: String,
+      select: false,
+    },
+
+    emailOtpExpiresAt: {
       type: Date,
       select: false,
     },

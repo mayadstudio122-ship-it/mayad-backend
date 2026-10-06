@@ -11,11 +11,12 @@ import mongoose from "mongoose";
 
 
 import Admin from "../models/Admin";
-
 import Artist from "../models/Artist";
 const ArtistModel: any = Artist;
-import { sendAdminOtpEmail } from "../utils/sendEmail";
+import PublicArtist from "../models/PublicArtist";
+import Movie from "../models/Movie";
 import Inquiry from "../models/Inquiry";
+import { sendAdminOtpEmail } from "../utils/sendEmail";
 
 // ============================================================
 // CEO LOGIN (STEP 1: PASSWORD VERIFICATION & OTP DISPATCH)
@@ -430,6 +431,151 @@ export const updateAdminProfile = async (
   }
 };
 
+// REQUEST ADMIN EMAIL UPDATE (SEND OTP TO NEW EMAIL)
+export const requestAdminEmailUpdate = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const adminId = res.locals.admin?.id;
+    if (!adminId) {
+      res.status(401).json({ success: false, message: "Admin authentication required" });
+      return;
+    }
+
+    const { newEmail } = req.body as { newEmail?: string };
+    if (!newEmail || !newEmail.trim()) {
+      res.status(400).json({ success: false, message: "New email address is required" });
+      return;
+    }
+
+    const trimmedEmail = newEmail.toLowerCase().trim();
+
+    const admin = await Admin.findOne({ _id: adminId, role: "CEO", isActive: true });
+    if (!admin) {
+      res.status(404).json({ success: false, message: "Admin account not found" });
+      return;
+    }
+
+    if (admin.email === trimmedEmail) {
+      res.status(400).json({ success: false, message: "New email must be different from current email" });
+      return;
+    }
+
+    const existing = await Admin.findOne({ email: trimmedEmail, _id: { $ne: adminId } });
+    if (existing) {
+      res.status(400).json({ success: false, message: "Email is already in use by another admin" });
+      return;
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+    admin.pendingEmail = trimmedEmail;
+    admin.emailOtp = otp;
+    admin.emailOtpExpiresAt = expiresAt;
+    await admin.save();
+
+    console.log("\n==========================================");
+    console.log(`🔑 [MAYAD DEV] EMAIL UPDATE OTP FOR NEW EMAIL (${trimmedEmail}): ${otp}`);
+    console.log("==========================================\n");
+
+    let emailSent = false;
+    try {
+      await sendAdminOtpEmail({
+        toEmail: trimmedEmail,
+        adminName: admin.name || "MAYAD CEO",
+        otp,
+      });
+      emailSent = true;
+    } catch (emailErr: any) {
+      console.warn("⚠️ Warning: Could not send OTP via SMTP to new email.");
+      console.warn("Details:", emailErr?.message || emailErr);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: emailSent
+        ? `OTP sent to ${trimmedEmail}. Please enter OTP to verify & update email.`
+        : `OTP generated for ${trimmedEmail}! (Check backend terminal console if SMTP is not configured).`,
+      pendingEmail: trimmedEmail,
+    });
+  } catch (error: any) {
+    console.error("Request email update error:", error);
+    res.status(500).json({ success: false, message: error?.message || "Internal server error" });
+  }
+};
+
+// VERIFY ADMIN EMAIL UPDATE (VERIFY OTP & SAVE NEW EMAIL)
+export const verifyAdminEmailUpdate = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const adminId = res.locals.admin?.id;
+    if (!adminId) {
+      res.status(401).json({ success: false, message: "Admin authentication required" });
+      return;
+    }
+
+    const { newEmail, otp } = req.body as { newEmail?: string; otp?: string };
+    if (!newEmail || !otp) {
+      res.status(400).json({ success: false, message: "New email and OTP are required" });
+      return;
+    }
+
+    const admin = await Admin.findOne({ _id: adminId, role: "CEO", isActive: true })
+      .select("+pendingEmail +emailOtp +emailOtpExpiresAt");
+
+    if (!admin) {
+      res.status(404).json({ success: false, message: "Admin account not found" });
+      return;
+    }
+
+    const trimmedEmail = newEmail.toLowerCase().trim();
+
+    if (!admin.pendingEmail || admin.pendingEmail !== trimmedEmail) {
+      res.status(400).json({ success: false, message: "Invalid email update request or email mismatch" });
+      return;
+    }
+
+    if (!admin.emailOtpExpiresAt || new Date() > admin.emailOtpExpiresAt) {
+      res.status(400).json({ success: false, message: "OTP has expired. Please request a new OTP." });
+      return;
+    }
+
+    if (admin.emailOtp !== otp.trim()) {
+      res.status(400).json({ success: false, message: "Invalid OTP. Please check and try again." });
+      return;
+    }
+
+    // OTP Verified — Update email
+    admin.email = trimmedEmail;
+    admin.pendingEmail = undefined;
+    admin.emailOtp = undefined;
+    admin.emailOtpExpiresAt = undefined;
+    await admin.save();
+
+    const nameParts = (admin.name || "").split(" ");
+    res.status(200).json({
+      success: true,
+      message: "Admin email updated successfully!",
+      admin: {
+        id: admin._id.toString(),
+        name: admin.name,
+        firstName: nameParts[0] || "Super",
+        lastName: nameParts.slice(1).join(" ") || "Admin",
+        email: admin.email,
+        role: admin.role,
+      },
+    });
+  } catch (error: any) {
+    console.error("Verify email update error:", error);
+    res.status(500).json({ success: false, message: error?.message || "Internal server error" });
+  }
+};
+
 // UPDATE CEO PASSWORD
 export const updateAdminPassword = async (
   req: Request,
@@ -447,6 +593,11 @@ export const updateAdminPassword = async (
       newPassword?: string;
     };
 
+    if (!currentPassword || !currentPassword.trim()) {
+      res.status(400).json({ success: false, message: "Current password is required" });
+      return;
+    }
+
     if (!newPassword || newPassword.length < 6) {
       res.status(400).json({ success: false, message: "New password must be at least 6 characters long" });
       return;
@@ -458,12 +609,10 @@ export const updateAdminPassword = async (
       return;
     }
 
-    if (currentPassword) {
-      const isMatch = await bcrypt.compare(currentPassword, admin.password);
-      if (!isMatch) {
-        res.status(400).json({ success: false, message: "Current password is incorrect" });
-        return;
-      }
+    const isMatch = await bcrypt.compare(currentPassword, admin.password);
+    if (!isMatch) {
+      res.status(400).json({ success: false, message: "Current password is incorrect" });
+      return;
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -707,211 +856,152 @@ export const getAdminStats = async (
 
 
 export const getAdminArtists = async (
-
   req: Request,
-
   res: Response
-
 ): Promise<void> => {
-
   try {
-
     const page = Math.max(
-
       1,
-
       parseInt(req.query.page as string, 10) || 1
-
     );
-
-
 
     const limit = Math.min(
-
       100,
-
       Math.max(
-
         1,
-
         parseInt(req.query.limit as string, 10) || 10
-
       )
-
     );
 
-
-
     const search = (
-
       (req.query.search as string) || ""
-
     ).trim();
-
-
 
     const status = (
-
       (req.query.status as string) || ""
-
     ).trim();
-
-
 
     const filter: Record<string, any> = {};
 
-
-
     const allowedStatuses = [
-
       "Pending Approval",
-
       "Approved",
-
       "Rejected",
-
     ];
 
-
-
-    if (status && status !== "All") {
-
+    if (status && status !== "All" && status !== "all") {
       if (!allowedStatuses.includes(status)) {
-
         res.status(400).json({
-
           success: false,
-
           message: "Invalid artist status filter",
-
         });
-
         return;
-
       }
 
-
-
       filter.accountStatus = status;
-
     }
-
-
 
     if (search) {
-
       const escapedSearch = search.replace(
-
-        /[.*+?^${}()|[**\]\\**]/g,
-
+        /[.*+?^${}()|[\]\\]/g,
         "\\$&"
-
       );
-
-
 
       const searchRegex = new RegExp(
-
         escapedSearch,
-
         "i"
-
       );
 
-
-
       filter.$or = [
-
         { fullName: searchRegex },
-
         { stageName: searchRegex },
-
         { email: searchRegex },
-
         { phone: searchRegex },
-
         { category: searchRegex },
-
         { location: searchRegex },
-
       ];
-
     }
 
+    const registeredArtists = await Artist.find(filter)
+      .select("-password -resetPasswordTokenHash -resetPasswordExpiresAt")
+      .sort({ createdAt: -1 })
+      .lean();
 
+    const formattedRegistered = registeredArtists.map((artist: any) => ({
+      ...artist,
+      id: artist._id.toString(),
+    }));
 
-    const [artists, total] = await Promise.all([
+    let combinedArtists = [...formattedRegistered];
+    if (!status || status === "All" || status === "all" || status === "Approved") {
+      const legacyArtists = await PublicArtist.find().sort({ createdAt: -1 }).lean();
+      const formattedPublic = legacyArtists.map((artist: any) => ({
+        id: artist._id.toString(),
+        legacyId: artist.legacyId || artist._id.toString(),
+        fullName: artist.name || artist.originalName || "Artist",
+        stageName: artist.originalName || artist.name || "Artist",
+        category: artist.role || "Actor",
+        secondaryCategory: artist.secondaryCategory || "",
+        email: artist.email || "",
+        phone: artist.phone || "",
+        location: artist.birthPlace || "Rajasthan",
+        experience: artist.experience || "5+ Years",
+        bio: artist.bio || "",
+        profilePhoto: artist.imageUrl || "/Default.jpg",
+        imageUrl: artist.imageUrl || "/Default.jpg",
+        showreel: artist.showreel || "",
+        imdb: artist.imdb || "",
+        instagram: artist.instagram || "",
+        languages: artist.languages || [],
+        highlights: artist.highlights || [],
+        tag: artist.tag || "STAR",
+        isVerified: true,
+        accountStatus: "Approved",
+        createdAt: artist.createdAt,
+      }));
 
-      Artist.find(filter)
+      let filteredPublic = formattedPublic;
+      if (search) {
+        const searchLower = search.toLowerCase();
+        filteredPublic = formattedPublic.filter(
+          (a) =>
+            a.fullName.toLowerCase().includes(searchLower) ||
+            a.stageName.toLowerCase().includes(searchLower) ||
+            a.category.toLowerCase().includes(searchLower) ||
+            a.location.toLowerCase().includes(searchLower)
+        );
+      }
 
-        .select(
+      const registeredNames = new Set(
+        formattedRegistered.map((a) => (a.stageName || a.fullName || "").trim().toLowerCase())
+      );
+      const additionalPublic = filteredPublic.filter(
+        (a) => !registeredNames.has((a.stageName || a.fullName || "").trim().toLowerCase())
+      );
 
-          "-password -resetPasswordTokenHash -resetPasswordExpiresAt"
+      combinedArtists = [...formattedRegistered, ...additionalPublic];
+    }
 
-        )
-
-        .sort({ createdAt: -1 })
-
-        .skip((page - 1) * limit)
-
-        .limit(limit)
-
-        .lean(),
-
-
-
-      Artist.countDocuments(filter),
-
-    ]);
-
-
+    const total = combinedArtists.length;
+    const paginatedArtists = combinedArtists.slice((page - 1) * limit, page * limit);
 
     res.status(200).json({
-
       success: true,
-
-
-
-      artists: artists.map((artist) => ({
-
-        ...artist,
-
-        id: artist._id.toString(),
-
-      })),
-
-
-
+      artists: paginatedArtists,
       pagination: {
-
         total,
-
         page,
-
         limit,
-
-        pages: Math.ceil(total / limit),
-
+        pages: Math.ceil(total / limit) || 1,
       },
-
     });
-
   } catch (error) {
-
     console.error("Admin artists error:", error);
-
-
-
     res.status(500).json({
-
       success: false,
-
       message: "Failed to fetch artists",
-
     });
-
   }
-
 };
 
 

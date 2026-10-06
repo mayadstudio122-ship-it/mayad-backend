@@ -7,6 +7,8 @@ import {
   adminResendOtp,
   getAdminProfile,
   updateAdminProfile,
+  requestAdminEmailUpdate,
+  verifyAdminEmailUpdate,
   updateAdminPassword,
   adminLogout,
   getAdminStats,
@@ -51,6 +53,8 @@ router.post("/resend-otp", adminResendOtp);
 // Protected CEO profile
 router.get("/me", adminAuth, getAdminProfile);
 router.put("/profile", adminAuth, updateAdminProfile);
+router.post("/request-email-update", adminAuth, requestAdminEmailUpdate);
+router.post("/verify-email-update", adminAuth, verifyAdminEmailUpdate);
 router.put("/change-password", adminAuth, updateAdminPassword);
 
 // CEO logout
