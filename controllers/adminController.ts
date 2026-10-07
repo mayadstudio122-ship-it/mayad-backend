@@ -79,6 +79,7 @@ export const adminLogin = async (
 
     // Send OTP via Email
     let emailSent = false;
+    let emailErrorMessage = "";
     try {
       await sendAdminOtpEmail({
         toEmail: admin.email,
@@ -87,8 +88,8 @@ export const adminLogin = async (
       });
       emailSent = true;
     } catch (emailErr: any) {
-      console.warn("⚠️ Warning: Could not send OTP via SMTP (SMTP variables missing or invalid in .env).");
-      console.warn("Details:", emailErr?.message || emailErr);
+      emailErrorMessage = emailErr?.message || String(emailErr);
+      console.warn("⚠️ Warning: Could not send OTP via SMTP:", emailErrorMessage);
     }
 
     res.status(200).json({
@@ -96,7 +97,7 @@ export const adminLogin = async (
       step: "VERIFY_OTP",
       message: emailSent
         ? `OTP sent successfully to ${admin.email}. Please verify to log in.`
-        : `OTP generated! (SMTP not configured — view OTP in backend terminal console).`,
+        : `OTP generated! (SMTP error: ${emailErrorMessage}).`,
       email: admin.email,
     });
   } catch (error) {
@@ -258,6 +259,7 @@ export const adminResendOtp = async (
     console.log("==========================================\n");
 
     let emailSent = false;
+    let emailErrorMessage = "";
     try {
       await sendAdminOtpEmail({
         toEmail: admin.email,
@@ -266,14 +268,15 @@ export const adminResendOtp = async (
       });
       emailSent = true;
     } catch (emailErr: any) {
-      console.warn("⚠️ Warning: Could not send OTP via SMTP (SMTP variables missing or invalid in .env).");
+      emailErrorMessage = emailErr?.message || String(emailErr);
+      console.warn("⚠️ Warning: Could not send OTP via SMTP:", emailErrorMessage);
     }
 
     res.status(200).json({
       success: true,
       message: emailSent
         ? `A new 6-digit OTP has been sent to ${admin.email}.`
-        : `A new 6-digit OTP was generated (check backend console for code).`,
+        : `A new 6-digit OTP was generated (SMTP error: ${emailErrorMessage}).`,
     });
   } catch (error) {
     console.error("Resend OTP error:", error);

@@ -28,19 +28,37 @@ const createTransporter = () => {
     SMTP_PASS,
   } = process.env;
 
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    throw new Error("SMTP environment variables are missing");
+  if (!SMTP_USER || !SMTP_PASS) {
+    throw new Error("SMTP user and password environment variables are missing");
   }
 
+  const host = (SMTP_HOST || "smtp.gmail.com").trim();
   const port = Number(SMTP_PORT || 587);
 
+  // Use Nodemailer's built-in Gmail service configuration if host is gmail
+  if (host.includes("gmail")) {
+    return nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: SMTP_USER.trim(),
+        pass: SMTP_PASS.trim(),
+      },
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+  }
+
   return nodemailer.createTransport({
-    host: SMTP_HOST,
+    host,
     port,
     secure: port === 465,
     auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS,
+      user: SMTP_USER.trim(),
+      pass: SMTP_PASS.trim(),
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   });
 };
