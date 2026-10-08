@@ -5,6 +5,9 @@ import {
   adminLogin,
   adminVerifyOtp,
   adminResendOtp,
+  adminForgotPassword,
+  adminVerifyForgotPasswordOtp,
+  adminResetPasswordWithOtp,
   getAdminProfile,
   updateAdminProfile,
   requestAdminEmailUpdate,
@@ -49,6 +52,11 @@ router.post("/verify-otp", adminVerifyOtp);
 
 // CEO login Resend OTP
 router.post("/resend-otp", adminResendOtp);
+
+// CEO Forgot Password (3-Step OTP Flow)
+router.post("/forgot-password", adminForgotPassword);
+router.post("/verify-reset-otp", adminVerifyForgotPasswordOtp);
+router.post("/reset-password", adminResetPasswordWithOtp);
 
 // Protected CEO profile
 router.get("/me", adminAuth, getAdminProfile);

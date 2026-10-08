@@ -15,8 +15,9 @@ import Artist from "../models/Artist";
 const ArtistModel: any = Artist;
 import PublicArtist from "../models/PublicArtist";
 import Movie from "../models/Movie";
+import TalentApplication from "../models/TalentApplication";
 import Inquiry from "../models/Inquiry";
-import { sendAdminOtpEmail } from "../utils/sendEmail";
+import { sendAdminOtpEmail, sendAdminPasswordResetOtpEmail } from "../utils/sendEmail";
 
 // ============================================================
 // CEO LOGIN (STEP 1: PASSWORD VERIFICATION & OTP DISPATCH)
@@ -283,6 +284,226 @@ export const adminResendOtp = async (
     res.status(500).json({
       success: false,
       message: "Failed to resend OTP email",
+    });
+  }
+};
+
+// ============================================================
+// ADMIN FORGOT PASSWORD - STEP 1: REQUEST OTP
+// ============================================================
+
+export const adminForgotPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email } = req.body as { email?: string };
+
+    if (!email || !email.trim()) {
+      res.status(400).json({
+        success: false,
+        message: "Admin email address is required",
+      });
+      return;
+    }
+
+    const admin = await Admin.findOne({
+      email: email.toLowerCase().trim(),
+      role: "CEO",
+      isActive: true,
+    });
+
+    if (!admin) {
+      res.status(404).json({
+        success: false,
+        message: "No active administrator account found with this email address.",
+      });
+      return;
+    }
+
+    // Generate 6-Digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+    admin.otp = otp;
+    admin.otpExpiresAt = otpExpiresAt;
+    await admin.save();
+
+    console.log("\n==========================================");
+    console.log(`🔑 [MAYAD DEV] ADMIN FORGOT PASSWORD OTP FOR ${admin.email}: ${otp}`);
+    console.log("==========================================\n");
+
+    let emailSent = false;
+    let emailErrorMessage = "";
+    try {
+      await sendAdminPasswordResetOtpEmail({
+        toEmail: admin.email,
+        adminName: admin.name || "MAYAD CEO",
+        otp,
+      });
+      emailSent = true;
+    } catch (emailErr: any) {
+      emailErrorMessage = emailErr?.message || String(emailErr);
+      console.warn("⚠️ Warning: Could not send reset OTP via SMTP:", emailErrorMessage);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: emailSent
+        ? `Password reset OTP sent to ${admin.email}. Please check your inbox.`
+        : `Password reset OTP generated (SMTP: ${emailErrorMessage}).`,
+      email: admin.email,
+    });
+  } catch (error) {
+    console.error("Admin forgot password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// ============================================================
+// ADMIN FORGOT PASSWORD - STEP 2: VERIFY RESET OTP
+// ============================================================
+
+export const adminVerifyForgotPasswordOtp = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email, otp } = req.body as { email?: string; otp?: string };
+
+    if (!email || !otp) {
+      res.status(400).json({
+        success: false,
+        message: "Email and OTP code are required",
+      });
+      return;
+    }
+
+    const admin = await Admin.findOne({
+      email: email.toLowerCase().trim(),
+      role: "CEO",
+      isActive: true,
+    }).select("+otp +otpExpiresAt");
+
+    if (!admin || !admin.otp || !admin.otpExpiresAt) {
+      res.status(400).json({
+        success: false,
+        message: "No pending password reset request found. Please request a new OTP.",
+      });
+      return;
+    }
+
+    if (admin.otp !== otp.trim()) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid OTP code. Please check the code sent to your email.",
+      });
+      return;
+    }
+
+    if (new Date(admin.otpExpiresAt).getTime() < Date.now()) {
+      res.status(400).json({
+        success: false,
+        message: "OTP code has expired. Please request a new OTP.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "OTP code verified successfully! Enter your new password below.",
+    });
+  } catch (error) {
+    console.error("Admin verify reset OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// ============================================================
+// ADMIN FORGOT PASSWORD - STEP 3: RESET PASSWORD
+// ============================================================
+
+export const adminResetPasswordWithOtp = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email, otp, newPassword } = req.body as {
+      email?: string;
+      otp?: string;
+      newPassword?: string;
+    };
+
+    if (!email || !otp || !newPassword) {
+      res.status(400).json({
+        success: false,
+        message: "Email, OTP code, and new password are required",
+      });
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      res.status(400).json({
+        success: false,
+        message: "New password must be at least 6 characters long",
+      });
+      return;
+    }
+
+    const admin = await Admin.findOne({
+      email: email.toLowerCase().trim(),
+      role: "CEO",
+      isActive: true,
+    }).select("+otp +otpExpiresAt +password");
+
+    if (!admin || !admin.otp || !admin.otpExpiresAt) {
+      res.status(400).json({
+        success: false,
+        message: "No pending password reset request found. Please request a new OTP.",
+      });
+      return;
+    }
+
+    if (admin.otp !== otp.trim()) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid OTP code. Please verify your OTP code.",
+      });
+      return;
+    }
+
+    if (new Date(admin.otpExpiresAt).getTime() < Date.now()) {
+      res.status(400).json({
+        success: false,
+        message: "OTP code has expired. Please request a new OTP.",
+      });
+      return;
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    admin.password = hashedPassword;
+    admin.otp = undefined;
+    admin.otpExpiresAt = undefined;
+    await admin.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Admin password reset successfully! You can now log in with your new password.",
+    });
+  } catch (error) {
+    console.error("Admin reset password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
     });
   }
 };
@@ -699,9 +920,10 @@ export const getAdminStats = async (
     const [
       registeredArtists,
       legacyArtists,
-      pendingApprovals,
-      rejectedArtists,
-      approvedRegisteredCount,
+      talentApplications,
+      totalMovies,
+      totalInquiries,
+      pendingInquiriesCount,
     ] = await Promise.all([
       Artist.find()
         .select("fullName stageName category accountStatus isVerified createdAt profilePhoto")
@@ -711,9 +933,13 @@ export const getAdminStats = async (
         .select("legacyId slug name originalName role imageUrl bio createdAt")
         .sort({ createdAt: -1 })
         .lean(),
-      Artist.countDocuments({ accountStatus: "Pending Approval" }),
-      Artist.countDocuments({ accountStatus: "Rejected" }),
-      Artist.countDocuments({ accountStatus: "Approved" }),
+      TalentApplication.find()
+        .select("fullName preferredLanguage experienceLevel interestedRoles status createdAt profilePhoto")
+        .sort({ createdAt: -1 })
+        .lean(),
+      (Movie as any).countDocuments(),
+      (Inquiry as any).countDocuments(),
+      (Inquiry as any).countDocuments({ status: "Pending" }),
     ]);
 
     const normalizeName = (value: unknown): string =>
@@ -731,26 +957,55 @@ export const getAdminStats = async (
       return name && !legacyNames.has(name);
     });
 
-    const totalArtists = legacyByName.size + additionalRegistered.length;
+    const additionalTalentApps = (talentApplications as any[]).filter((artist) => {
+      const name = normalizeName(artist.fullName);
+      return name && !legacyNames.has(name);
+    });
+
+    const totalArtists = legacyByName.size + additionalRegistered.length + additionalTalentApps.length;
     const verifiedArtists = legacyByName.size + additionalRegistered.filter(
       (artist) => artist.isVerified === true
     ).length;
-    const approvedArtists = legacyByName.size + additionalRegistered.filter(
-      (artist) => artist.accountStatus === "Approved"
-    ).length;
 
-    // Build monthly trend from both collections, deduplicating registered
-    // profiles against legacy profiles by normalized display name.
+    const pendingTalentCount = additionalTalentApps.filter(
+      (a) => a.status === "Pending" || a.status === "Under Review"
+    ).length;
+    const pendingRegisteredCount = (registeredArtists as any[]).filter(
+      (a) => a.accountStatus === "Pending Approval"
+    ).length;
+    const pendingApprovals = pendingTalentCount + pendingRegisteredCount;
+
+    const approvedTalentCount = additionalTalentApps.filter(
+      (a) => a.status === "Approved" || a.status === "Shortlisted"
+    ).length;
+    const approvedRegisteredCount = (registeredArtists as any[]).filter(
+      (a) => a.accountStatus === "Approved"
+    ).length;
+    const approvedArtists = legacyByName.size + approvedTalentCount + approvedRegisteredCount;
+
+    const rejectedTalentCount = additionalTalentApps.filter(
+      (a) => a.status === "Rejected"
+    ).length;
+    const rejectedRegisteredCount = (registeredArtists as any[]).filter(
+      (a) => a.accountStatus === "Rejected"
+    ).length;
+    const rejectedArtists = rejectedTalentCount + rejectedRegisteredCount;
+
+    // Build monthly trend from all collections
     const trendRecords = [
       ...(legacyArtists as any[]).map((artist) => ({
         name: artist.name || artist.originalName,
-        createdAt: artist.createdAt,
+        createdAt: artist.createdAt || new Date(),
       })),
       ...additionalRegistered.map((artist) => ({
         name: artist.stageName || artist.fullName,
-        createdAt: artist.createdAt,
+        createdAt: artist.createdAt || new Date(),
       })),
-    ].filter((artist) => artist.createdAt && new Date(artist.createdAt) >= startDate);
+      ...additionalTalentApps.map((artist) => ({
+        name: artist.fullName,
+        createdAt: artist.createdAt || new Date(),
+      })),
+    ];
 
     const artistTrend: { month: string; count: number }[] = [];
     for (let i = 5; i >= 0; i--) {
@@ -782,7 +1037,7 @@ export const getAdminStats = async (
       subtitle: artist.role || "Artist",
       status: "Approved",
       isVerified: true,
-      timestamp: artist.createdAt,
+      timestamp: artist.createdAt || new Date(),
       type: "artist",
     }));
 
@@ -792,19 +1047,25 @@ export const getAdminStats = async (
       subtitle: artist.category || "Artist",
       status: artist.accountStatus,
       isVerified: artist.isVerified,
-      timestamp: artist.createdAt,
+      timestamp: artist.createdAt || new Date(),
       type: "artist",
     }));
 
-    const recentActivity = [...legacyActivity, ...registeredActivity]
+    const talentActivity = additionalTalentApps.map((artist) => ({
+      id: artist._id.toString(),
+      title: artist.fullName || "Artist Candidate",
+      subtitle: Array.isArray(artist.interestedRoles) ? artist.interestedRoles.join(", ") : "Talent Application",
+      status: artist.status || "Pending",
+      isVerified: false,
+      timestamp: artist.createdAt || new Date(),
+      type: "talent-application",
+    }));
+
+    const recentActivity = [...legacyActivity, ...registeredActivity, ...talentActivity]
       .sort((a: any, b: any) =>
         new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
       )
       .slice(0, 10);
-
-    const totalMovies = await (Movie as any).countDocuments();
-    const totalInquiries = await (Inquiry as any).countDocuments();
-    const pendingInquiriesCount = await (Inquiry as any).countDocuments({ status: "Pending" });
 
     res.status(200).json({
       success: true,
