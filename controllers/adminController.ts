@@ -41,8 +41,11 @@ export const adminLogin = async (
       return;
     }
 
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanPassword = password.trim();
+
     const admin = await Admin.findOne({
-      email: email.toLowerCase().trim(),
+      email: cleanEmail,
       role: "CEO",
       isActive: true,
     }).select("+password");
@@ -55,7 +58,10 @@ export const adminLogin = async (
       return;
     }
 
-    const isMatch = await bcrypt.compare(password, admin.password);
+    let isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch && cleanPassword !== password) {
+      isMatch = await bcrypt.compare(cleanPassword, admin.password);
+    }
 
     if (!isMatch) {
       res.status(401).json({
