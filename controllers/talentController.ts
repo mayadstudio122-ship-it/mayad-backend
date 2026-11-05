@@ -205,7 +205,7 @@ export const adminGetTalentApplications = async (
 ): Promise<void> => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
+    const limit = Math.min(10000, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
     const search = ((req.query.search as string) || "").trim();
     const roleFilter = ((req.query.role as string) || "").trim();
     const expFilter = ((req.query.experienceLevel as string) || "").trim();
