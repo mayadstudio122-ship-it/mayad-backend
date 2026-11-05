@@ -65,41 +65,42 @@ export const adminLogin = async (
       return;
     }
 
-    // Generate 6-Digit Random Numeric OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-    admin.otp = otp;
-    admin.otpExpiresAt = otpExpiresAt;
-    await admin.save();
-
-    // Print OTP in Backend Terminal for easy local testing
-    console.log("\n==========================================");
-    console.log(`🔑 [MAYAD DEV] ADMIN OTP FOR ${admin.email}: ${otp}`);
-    console.log("==========================================\n");
-
-    // Send OTP via Email
-    let emailSent = false;
-    let emailErrorMessage = "";
-    try {
-      await sendAdminOtpEmail({
-        toEmail: admin.email,
-        adminName: admin.name || "MAYAD CEO",
-        otp,
-      });
-      emailSent = true;
-    } catch (emailErr: any) {
-      emailErrorMessage = emailErr?.message || String(emailErr);
-      console.warn("⚠️ Warning: Could not send OTP via SMTP:", emailErrorMessage);
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error("JWT_SECRET is missing");
     }
+
+    const token = jwt.sign(
+      {
+        id: admin._id.toString(),
+        role: "CEO",
+      },
+      jwtSecret,
+      {
+        expiresIn: "1d",
+        issuer: "mayad-admin",
+        audience: "mayad-admin-dashboard",
+      }
+    );
+
+    res.cookie("mayad_admin_token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+      path: "/",
+    });
 
     res.status(200).json({
       success: true,
-      step: "VERIFY_OTP",
-      message: emailSent
-        ? `OTP sent successfully to ${admin.email}. Please verify to log in.`
-        : `OTP generated! (SMTP error: ${emailErrorMessage}).`,
-      email: admin.email,
+      message: "Admin authentication successful",
+      token,
+      admin: {
+        id: admin._id.toString(),
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+      },
     });
   } catch (error) {
     console.error("Admin login error:", error);
